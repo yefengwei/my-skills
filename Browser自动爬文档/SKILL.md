@@ -65,17 +65,70 @@ node scripts/fetch-course.js \
 
 ### 4.（可选）导入飞书知识库
 
+> ⚠️ **导入前必须先做图片嵌入（步骤 4.1），否则全部图片会裂图。**
+
+#### 4.1 图片嵌入（强制，不可跳过）
+
+飞书 docx 导入**不支持 webp，也不会抓取远程外链图**。本地 md 里的 `![](https://pic.code-nav.cn/...)` 直接导入必然裂图
+（飞书显示“无法导入该图片，请从原文档中保存原图后重新上传”）。必须先转成内嵌 PNG 的 docx：
+
+```bash
+# 对本目录所有 md 逐个生成同名 docx（远程图下载→webp 转 PNG→pandoc 嵌入）
+python D:/Desktop/temp/.workbuddy/cdp-scraper/embed_images.py "D:/Desktop/temp/课程/子目录/xxx.md"
+```
+
+`embed_images.py` 做的事：下载远程图到 `images/`（URL 哈希命名，全局去重）→ 用 Pillow 把 webp 转 PNG →
+md 链接改写为本地相对路径 → `pandoc xxx.md -o xxx.docx`（图字节真正写进 `word/media/`）。
+
+**校验内嵌是否成功**：
+```bash
+python -c "import zipfile; z=zipfile.ZipFile('xxx.docx'); print(len([n for n in z.namelist() if n.startswith('word/media/')]))"
+```
+输出应等于该文档的图片数，为 0 则说明没嵌进去。
+
+#### 4.2 导入（增量模式，幂等可续跑）
+
 先按 references/workflow.md 第 6.1 节用 `lark-cli wiki +node-list` 找到目标父节点 token，再：
 
 ```bash
-bash scripts/import-feishu.sh \
-  --base-dir "D:/Desktop/temp/目标文件夹" \
-  --space-id <知识空间ID> \
-  --parent-token <父节点token> \
-  --course-title "课程名"   # 可选，默认取文件夹名
+python D:/Desktop/temp/.workbuddy/cdp-scraper/reimport_all.py --run
 ```
 
-脚本自动建「课程节点 + 各子目录节点」，逐个 `drive +import --type docx` 再 `wiki +move` 移入，严格还原本地结构。
+（脚本内 `COURSES` 列表维护「课程标题 + 本地路径」的映射，按需修改。）
+
+**增量模式**逻辑：找现有课程节点（无则建）→ 找/建子目录节点 → 列出已有文档标题 → **只导入缺失的**。
+重复跑只会补漏，不会重复创建，可放心断点续跑。
+
+导入后校验：
+```bash
+python D:/Desktop/temp/.workbuddy/cdp-scraper/verify.py
+# 看 verify_out.txt：缺失总数应为 0
+```
+
+### 5.（可选）本地 md 图片链接体检与修复
+
+抓取后、或任何时候怀疑图片失效，跑一次体检：
+
+```bash
+python scripts/check_images.py --base "D:/Desktop/temp"          # 只体检出报告
+python scripts/check_images.py --base "D:/Desktop/temp" --apply   # 体检 + 修复本地路径污染
+python scripts/check_images.py --base "D:/Desktop/temp" --no-probe # 跳过网络探测
+```
+
+脚本把图片引用分成三类并分别处理：
+
+| 类别 | 判定 | 处理 |
+|---|---|---|
+| http(s) 外链 | 不在 ``` 围栏内 | 并发 HEAD 探测（403/405/501 自动回退 GET），统计有效性 |
+| 本地相对路径 | `images/<32位hash>.<ext>` | **反查还原**：文件名就是 `md5(url)`，用「URL 池」反查回原始外链（`--apply` 写盘，自动备份） |
+| 代码块示例 | ``` 围栏内 | 不处理（`picture?.url`、`../assets/logo.png` 等是教程源码，不是真实引用） |
+
+**URL 池来源**（决定还原命中率）：md 中残留的 http 图片链接 + 同目录 `*.json` 抓取产物里的链接。
+实测 5 门课程 1755 处污染链接 **100% 还原成功，hash 零冲突**，抽样 15 张比对像素尺寸 15/15 一致。
+
+**⚠️ 不要就地改写原 md 的图片链接。** 早期版本脚本把原 md 的 http 外链改成了 `images/xxx.png`，
+导致 md 本地打开全是裂图。正确做法是只改写副本（`__tmp__.md`）再交给 pandoc，原 md 始终保持 http 外链。
+万一已经污染，用上面的 `--apply` 反查还原即可。
 
 ## 关键机制（务必理解）
 
@@ -84,11 +137,24 @@ bash scripts/import-feishu.sh \
 - **section URL 用 `courseArticleId`**，不是 `catalog.id`（后者 article API 返回 404）。
 - **目录名含 `|` 是 Windows 非法字符**，脚本已自动替换为全角 `｜`。
 - **分类函数 `classifyFolder()` 可按需修改**以适配不同课程结构；误分类项抓取后 `mv` 修正即可。
+- **playwright-core 连不上新版 Chrome**（Chrome 151 实测 `connectOverCDP` 握手超时 30s）。
+  需要 CDP 时改用 Python `websocket-client` 直连：`http://127.0.0.1:9222/json/new?<url>`（PUT 开新标签）
+  → 连返回的 `webSocketDebuggerUrl` → `Network.enable` + 监听 `Network.responseReceived` →
+  `Network.getResponseBody` 取 API 响应。参考 `scripts/cdp_fetch.py`。
+- **探测图片有效性必须回退 GET**：`picsum.photos` 之类图床对 HEAD 返回 405，只看 HEAD 会误判为失效。
+- **源站本身也可能有死链**：语雀迁移遗留的 `doc/xxx.png#id=...` 相对路径，源站页面同样渲染不出，
+  这类无法还原，只能删除并补说明文字（先看页面 DOM 里有没有真实 src 可捞）。
 
 ## 参考文件
 
-- `references/workflow.md`：Chrome 启动命令、反爬原理、section URL、清洗规则、飞书导入分步细节、故障表。
+- `references/workflow.md`：Chrome 启动命令、反爬原理、section URL、清洗规则、飞书导入分步细节、
+  **lark-cli API 关键坑与增量导入模式**（第 6.5/6.6 节，导入前必看）、故障表。
 - `scripts/find-chrome.js`：首次使用从默认地址定位 Chrome.exe（找不到则 `NOT_FOUND`，由调用方询问用户并 `--set` 写入配置）。
 - `scripts/fetch-course.js`：参数化主抓取脚本（`--course-id/--target-dir/--exclude/--chrome-port`）。
 - `scripts/catalog-tree.js`：仅拉取并打印目录树（不抓内容，用于预览/确认）。
-- `scripts/import-feishu.sh`：本地 md 自动导入飞书知识库（自动建节点 + 逐个移动）。
+- `scripts/embed_images.py`：远程图下载 → webp 转 PNG → pandoc 生成内嵌图 docx（**导入飞书前必跑**）。
+- `scripts/reimport_all.py`：增量导入飞书（幂等，只补缺失文档）。改 `COURSES` 列表后 `python reimport_all.py --run`，**后台运行**。
+- `scripts/verify.py`：对比本地 md 与飞书文档，输出缺失清单（正常应为 0）。
+- `scripts/check_images.py`：本地 md 图片链接体检 + 本地路径污染反查还原（参数 `--base/--apply/--no-probe`）。
+- `scripts/cdp_fetch.py`：Python 直连 CDP 抓文章（playwright 连不上新版 Chrome 时的替代方案）。
+- `scripts/import-feishu.sh`：早期一次性导入脚本（已过时，保留参考；新场景优先用 `reimport_all.py`）。

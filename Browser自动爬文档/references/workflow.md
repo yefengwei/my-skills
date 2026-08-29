@@ -132,10 +132,17 @@ lark-cli wiki +node-create --parent-node-token <课程节点> --title "文字教
 ```
 记录每个子目录节点返回的 `node_token`，组成「子目录名 -> token」映射表。
 
-### 6.2 md → docx → 移入知识库
+### 6.2 ⚠️ 图片必须提前内嵌（最易踩的坑）
+
+**飞书 docx 导入不支持 webp，也不会抓取远程外链图。** 直接导入含 `![](https://...)` 的 md，
+结果就是所有图片显示「无法导入该图片，请从原文档中保存原图后重新上传」。
+
+必须先生成内嵌 PNG 的 docx（见 SKILL.md 步骤 4.1），再走下面的 import。
+
+### 6.3 md → docx → 移入知识库
 ```bash
 # 1) 导入为飞书 docx（落到 Drive 根目录）
-lark-cli drive +import --file "标题(程序员鱼皮).md" --type docx --as user --format json
+lark-cli drive +import --file "标题(程序员鱼皮).docx" --type docx --as user --format json
 #    返回 data.token（docx 的 file token）
 
 # 2) 移动到知识库子目录（docs_to_wiki 为移动、不残留于 Drive）
@@ -147,9 +154,34 @@ lark-cli wiki +move --obj-type docx --obj-token <token> \
 > 批量时建议用 Bash 脚本 + 关联数组存「子目录 -> token」映射，逐个导入并移动（参考示例 import-feishu.sh 思路）。
 > 脚本里 `lark-cli` 的 stdout 常带前缀文本，JSON 解析需 `raw.find('{')` 截断再 `json.loads`。
 
-### 6.3 清理
+### 6.4 清理
 - 验证阶段若手动测试产生重复文档：`lark-cli wiki +node-delete --node-token <token> --obj-type wiki --yes`
 - 最终用 `lark-cli wiki +node-list --parent-node-token <课程节点>` 核对每项目录文档数与本地一致、Drive 无残留。
+
+---
+
+## 6.5 lark-cli 飞书 API 关键坑（血泪版）
+
+| 坑 | 正确做法 |
+|---|---|
+| **删节点用错 obj-type** | node-list 返回的 `obj_type` 字段**不可靠**（课程/子目录/文档全显示 `docx`）。删除节点时一律用 `--obj-type wiki`（节点 token 是 wikcn 形式）。用 docx 会报 `node not found`（code 131005）。 |
+| **create 返回结构** | `+node-create` 返回 `data.node_token`，**不是** `data.node.node_token`。取错会静默失败（节点建了但拿不到 token）。 |
+| **move 参数名** | 是 `--target-parent-token`，不是 `--target-token`；还需 `--target-space-id`。写错报 `validation/invalid`。 |
+| **move 偶发 validation 错误** | 连续快速 import+move 时飞书偶发拒绝（单独重试同一文件必成功）。应对：每篇间隔 ≥1.5s，move 失败重试 4 次、间隔递增。**批量导入时 30%+ 失败率是并发问题，不是文件问题**——别去查文件名。 |
+| **subprocess 必须加 timeout** | 个别 lark-cli 调用会挂起，不加 `timeout=` 会拖死整个流程。建议 `timeout=120`。 |
+| **前台 Bash 会被杀** | 前台对 ~15+ 次 lark-cli 子进程调用会被杀（输出被吞、exit 1）。批量任务**必须 `run_in_background`**，日志写文件再读。 |
+| **判断节点类型** | 用 `has_child` 字段（true=有子节点）比 `obj_type` 可靠。但**不要用它做批量清理**——空子目录的 `has_child` 也是 false，会把子目录当文档删掉。 |
+
+### 6.6 推荐：增量导入而非"先删后建"
+
+**不要**先删光课程节点再重建——中途失败会丢整个结构。
+正确做法是幂等的增量模式（见 `reimport_all.py`）：
+
+```
+找现有课程节点（无则建）→ 找/建子目录节点 → 列已有文档标题 → 只导入缺失的
+```
+
+可随时中断、重复跑只会补漏。导入完用 `verify.py` 对比本地 md 与飞书文档，确认缺失为 0。
 
 ---
 
