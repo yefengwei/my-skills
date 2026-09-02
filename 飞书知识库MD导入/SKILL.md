@@ -5,7 +5,16 @@ description: 用 lark-cli 把本地 Markdown 项目（含图片/SVG/表格）批
 
 # 飞书知识库 Markdown 批量导入工作流
 
-2026-09-02 实战验证：120 篇 md / 2870 张图（1.4GB）/ 5 项目 / 42 子目录，结构、图片、文字三重校验全通过。
+2026-09-02 实战验证 ×2：① 编程导航 120 篇 md / 2870 张图（1.4GB）/ 5 项目 / 42 子目录（固定两层）；② easy-vibe 195 篇纯 md / 29 目录节点（**任意深度 2~4 层**，根级与目录级混排 md）。结构、图片、文字三重校验全通过。
+
+## 两种目录结构 → 两套脚本
+
+| 形态 | 脚本 | 要点 |
+| --- | --- | --- |
+| 固定「项目/子目录」两层（md 都在第二层） | `build_tree.py` / `import_docs.py` / `verify.py` | 上一代，两两配对 |
+| **任意深度目录树**（根级有 md、目录级也混排 md/子目录） | `build_tree_rec.py` / `import_docs_rec.py` / `verify_rec.py` + `ev_common.py`（公共层） | md 一律挂**直接父目录节点**；目录节点与文档节点可混挂同一父下；**建树按深度升序稳定排序**（父先子后，防 KeyError）；无「(程序员鱼皮)」后缀时标题=去 .md；`fix_indent_drop.py` 修复列表内嵌块后的缩进续文丢字 |
+
+配置：`ev_common.py` 常量走环境变量 `LARK_MD_SRC` / `LARK_SPACE_ID` / `LARK_ROOT_TITLE`（默认 easy-vibe 值）。
 
 ## 前置
 
@@ -22,6 +31,7 @@ description: 用 lark-cli 把本地 Markdown 项目（含图片/SVG/表格）批
    - HTML `<img src=...>` → `![alt](@./images/xxx.png)`（飞书只认 `@./` 本地图语法）
    - **剥掉 `<font>/<span>` 标签壳保留内文**——放白名单原样传会被飞书连内文一起静默丢弃（丢字 17%+ 实测）
    - **整篇嵌在有序列表里的 md（`1.` 空项 + 正文缩进 3 空格）必须拍平去缩进**——缩进块里的普通段落会被飞书丢弃（标题/列表/图片保留）
+   - **列表项内嵌表格/代码块后、同缩进续接的正文行也会被丢**（如 `2.` 表格后补一句、代码块后 `**关键一步**` 段）——用 `fix_indent_drop.py` 把这些「块结束（表格行/代码围栏）后紧跟的缩进普通行」去缩进抬级。注意列表内嵌代码围栏常有 3~5 空格缩进，判定正则不能限定 `\s{0,3}`
    - 其他裸 `<tag>` 转义为 `\<tag>`（代码块内不动）
 2. **SVG**：飞书不支持。唯一可用方案：本地 Chrome `--remote-debugging-port` + playwright `connectOverCDP` 截图成 PNG（`svg2png_cdp.py`）。cairosvg/svglib/PyMuPDF/resvg-py 渲染 Mermaid 全都丢文字或崩溃；`chromium.launch()` 在沙箱下因 `--remote-debugging-pipe` 握手失败不可用。
 3. **建目录骨架**（`build_tree.py`）：`wiki +node-create --parent-token <父>` 逐级建项目/目录节点（docx 类型），节点 token 写入 `state.json`。
@@ -54,7 +64,7 @@ description: 用 lark-cli 把本地 Markdown 项目（含图片/SVG/表格）批
 | `wiki +node-delete` | 必须显式 `--obj-type wiki`，否则删不掉 |
 | wiki 两套 token | 文档比对用 `obj_token`（=document_id），目录用 `node_token`，混用误报 |
 | 回读字符数"膨胀" | 伪影：`@./images/x` 短链变 ~200 字符 authcode 长链（每图 +170 字符） |
-| 回读"丢失"片段 | 先剔伪影再定性：全 `[-|]` = 表格分隔行；`%hex` = URL 编码；去掉后能在回读中找到 = 错位对齐 |
+| 回读"丢失"片段 | 先剔伪影再定性：全 `[-|]` = 表格分隔行；`%hex` = URL 编码；`<br/>`→`\n` = mermaid 图内换行（语义等价）；`[标题](<相对.md>)` = 站内链接被渲染纯文本（链接文字逐条验证在位即可）；去掉后能在回读中找到 = 错位对齐 |
 | lark-cli 输出尾部混 stderr | 用 `json.JSONDecoder().raw_decode(blob[blob.find('{'):])` 取首个 JSON |
 | Windows 下调 python 触发 mise 自动安装挂起 | 用完整路径直调内置解释器（如 `C:\Users\ysq\.workbuddy\binaries\python\versions\3.13.12\python.exe`） |
 
