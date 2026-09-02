@@ -65,6 +65,11 @@ node scripts/fetch-course.js \
 
 ### 4.（可选）导入飞书知识库
 
+> 💡 **飞书导入最新、最完整的方案已拆为独立 skill `飞书知识库MD导入`**（9/2 新增，原生 Markdown 导入，
+> 已 120 篇 / 2870 图实战验证：直接 `docs +create --doc-format markdown` + `@./images/` 语法，
+> 不需要 pandoc/docx、不踩下面的 HTML img 坑）。**新项目优先用那个 skill。**
+> 本步骤保留基于 `pandoc+docx` 的历史方案，供兼容与离线参考。
+
 > ⚠️ **导入前必须先做图片嵌入（步骤 4.1），否则全部图片会裂图。**
 
 #### 4.1 图片嵌入（强制，不可跳过）
@@ -79,6 +84,13 @@ python D:/Desktop/temp/.workbuddy/cdp-scraper/embed_images.py "D:/Desktop/temp/�
 
 `embed_images.py` 做的事：下载远程图到 `images/`（URL 哈希命名，全局去重）→ 用 Pillow 把 webp 转 PNG →
 md 链接改写为本地相对路径 → `pandoc xxx.md -o xxx.docx`（图字节真正写进 `word/media/`）。
+
+> ⚠️ **致命坑（已实战踩过，务必记住）**：pandoc 默认把 Markdown 里的 HTML `<img src="...">` 当 **raw HTML 丢弃**，
+> 不会嵌入成图片。若 md 图片是 `<img src="images/x.png" ...>` 形式（codefather 抓下来的绝大部分图片就是这个形式），
+> 直接 `pandoc xxx.md -o xxx.docx` 会生成**内嵌 0 张图**的 docx，飞书端整篇裂图。
+> **必须在 pandoc 前把 `<img src="x">` 转成行内式 `![](x)`**（`embed_images.py` 内部已做这步；
+> 若自己调 pandoc，先过 `scripts/embed_images.py` 里的 `html_img_to_md()`，或加 `-f markdown+raw_html` 但仍不会内嵌本地图字节）。
+> 验证方法就是步骤 4.1 末尾的 `zipfile` 计数，必须等于图片数，**为 0 立刻停手重来**。
 
 **校验内嵌是否成功**：
 ```bash
@@ -104,6 +116,33 @@ python D:/Desktop/temp/.workbuddy/cdp-scraper/reimport_all.py --run
 python D:/Desktop/temp/.workbuddy/cdp-scraper/verify.py
 # 看 verify_out.txt：缺失总数应为 0
 ```
+
+#### 4.3 md 图片本地化内嵌（可选，反向操作）
+
+> ⚠️ 与「关键机制」里"保持原 md 为 http 外链"的默认约定**相反**。仅当用户明确要求"图片全部内嵌到 md 文档"时执行。
+
+`scripts/embed_md.py`：把正式 md（``` 围栏外的）远程图与 HTML `<img>` 一并改写为本地 `images/<md5(url)>.<ext>` 引用，
+图片落盘到各文档同目录的 `images/`（webp 转 PNG），md 不再依赖网络。用法：
+
+```bash
+python scripts/embed_md.py              # dry-run，只统计待内嵌
+python scripts/embed_md.py --apply      # 实际改写（自动备份原文件）
+```
+
+- 同时覆盖**行内式** `![](http...)` 与 **HTML `<img src="http...">`** 两种形式（后者是早期脚本唯一漏掉的形式，
+  之前统计「正式 md 2917 处」与行内式 1728 处的口径差，正是这 913 处 HTML img）。
+- ``` 围栏内的 `picture?.url`、`<img>` 等教程示例代码**不处理**。
+- 改完后用 `verify_embed.py` 校验：本地引用文件必须全部存在、残留远程应为 0（提示词模板里的 picsum 示例除外）。
+
+全量导入 5 门课（本地图已内嵌、直接 pandoc 生成 docx 再上传）用 `scripts/import_all5.py`：
+它复用 `reimport_all.py` 的节点操作，但 pandoc 通过 **stdin 传内容 + `--resource-path`**，
+不产生临时 md 文件（避免触发安全删除阈值中断），且内置 HTML img → 行内式回退。
+
+```bash
+python scripts/import_all5.py           # 后台运行；进度写 ri5_progress.log
+```
+
+> 注：若飞书侧要的是"不依赖本地目录"的独立文档，走 `飞书知识库MD导入` skill 的原生 markdown 方案更干净。
 
 ### 5.（可选）本地 md 图片链接体检与修复
 
@@ -144,6 +183,13 @@ python scripts/check_images.py --base "D:/Desktop/temp" --no-probe # 跳过网�
 - **探测图片有效性必须回退 GET**：`picsum.photos` 之类图床对 HEAD 返回 405，只看 HEAD 会误判为失效。
 - **源站本身也可能有死链**：语雀迁移遗留的 `doc/xxx.png#id=...` 相对路径，源站页面同样渲染不出，
   这类无法还原，只能删除并补说明文字（先看页面 DOM 里有没有真实 src 可捞）。
+- **pandoc 把 HTML `<img>` 当 raw HTML 丢弃**：见步骤 4.1 致命坑。这是 120 篇导入踩的最隐蔽的雷——
+  导入时 log 显示 `OK`、飞书也能打开文档，但**所有图片 0 张**，肉眼几乎发现不了，必须靠 `zipfile` 数 `word/media/` 兜底。
+- **md 本地化内嵌 vs 保持外链是两种相反选择**：默认（爬取→飞书）保持 http 外链、导入时才转内嵌 docx；
+  当用户要求"md 图片全部内嵌"时反向操作（`embed_md.py`）。两者不要混用——已内嵌本地图的 md 再跑 `embed_images.py` 会因找不到 http URL 而不生成图。
+- **生成 docx 不要落临时 md 文件**：脚本里 `open(tmp_md,'w')` 再 `os.remove` 的模式，在批量（≥50 篇）时
+  会触发安全删除批量确认阈值导致进程被杀。改为 pandoc 走 **stdin**（`input=text` + `--resource-path=.` + `cwd=md目录`），
+  相对图片路径照常解析，且零落盘。见 `import_all5.py`。
 
 ## 参考文件
 
@@ -153,8 +199,11 @@ python scripts/check_images.py --base "D:/Desktop/temp" --no-probe # 跳过网�
 - `scripts/fetch-course.js`：参数化主抓取脚本（`--course-id/--target-dir/--exclude/--chrome-port`）。
 - `scripts/catalog-tree.js`：仅拉取并打印目录树（不抓内容，用于预览/确认）。
 - `scripts/embed_images.py`：远程图下载 → webp 转 PNG → pandoc 生成内嵌图 docx（**导入飞书前必跑**）。
+- `scripts/embed_md.py`：把 md 图片本地化内嵌（行内式 + HTML img 两种形式 → `images/<md5>.<ext>`）。
+- `scripts/import_all5.py`：5 门课全量导入飞书（pandoc 走 stdin，内置 HTML img→行内式回退，零临时文件）。
 - `scripts/reimport_all.py`：增量导入飞书（幂等，只补缺失文档）。改 `COURSES` 列表后 `python reimport_all.py --run`，**后台运行**。
 - `scripts/verify.py`：对比本地 md 与飞书文档，输出缺失清单（正常应为 0）。
+- `scripts/verify_embed.py`：校验 md 本地化内嵌结果（本地引用文件存在、残留远程应为 0）。
 - `scripts/check_images.py`：本地 md 图片链接体检 + 本地路径污染反查还原（参数 `--base/--apply/--no-probe`）。
 - `scripts/cdp_fetch.py`：Python 直连 CDP 抓文章（playwright 连不上新版 Chrome 时的替代方案）。
 - `scripts/import-feishu.sh`：早期一次性导入脚本（已过时，保留参考；新场景优先用 `reimport_all.py`）。
