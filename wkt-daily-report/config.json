@@ -1,0 +1,31 @@
+{
+  "_comment": "WKT 日报 skill 的配置。修改后所有脚本立即生效。",
+
+  "staff_no": "23028",
+  "staff_name": "YefengWei",
+  "year": 2026,
+
+  "template": "D:/yefengwei/wkt/公共盘/日报/WKT-工号-Daily-Work-Schedule-2026-模版.xlsx",
+  "_template_note": "公司统一发的空白模板（文件名带「模版」）。若此路径失效（公司换文件名/删旧模板），init_week.py 会自动在 output_dir 里找最新的 *模版*.xlsx 兜底。",
+  "output_dir": "D:/yefengwei/wkt/公共盘/日报",
+
+  "git_root": "D:/yefengwei/wkt",
+  "git_max_depth": 3,
+  "git_authors": ["yefengwei", "WKTYefw"],
+  "git_skip_repos": ["D:/yefengwei/wkt"],
+  "git_skip_dirs": ["node_modules", "dist", "build", ".git", ".idea", ".vscode", ".plugin-review", "vendor", "target", "out", "coverage"],
+
+  "work_start": "09:00",
+  "work_end": "17:00",
+  "lunch_start": "12:00",
+  "lunch_end": "13:00",
+  "interval_min": 60,
+
+  "_schedule_note": "⚠️ 这些值必须与模板 G3(开始时间)/I3(间隔) 完全一致——用户要求完全按模板填，初始化不许改 G3。当前模板：9:00 AM 起、60 分钟格。可填工作段=9:00~17:00 共 8 段（结束点模型），午休标在 13:00(1:00 PM) 行，18:00 起不填。实际上下班 8:30/17:30 的出入自然并入首尾时段。",
+
+  "language": "zh",
+  "_language_note": "日报填写语言：zh=中文（C 列中文叙述、E 列「已完成/进行中」）；en=英文。当前按用户要求默认中文。",
+
+  "_big_week_monday": "大小周基准：填一个「大周」的周一日期(YYYY-MM-DD)，脚本据此推算某周是大周(周六上班)还是小周(周六休息)。留空则不判断，周六一律当作可填。",
+  "big_week_monday": null
+}
