@@ -6,11 +6,12 @@
 
 | Skill | 说明 |
 |---|---|
-| `Browser自动爬文档` | 复用已登录 Chrome 会话，监听内部 API 抓取 codefather.cn 等课程文档为 Markdown，并可一键导入飞书知识库 |
-| `飞书知识库MD导入` | 用 lark-cli 把本地 Markdown 项目（含图片/SVG/表格）批量导入飞书知识库并做三重保真校验（结构/图片/文字）的完整工作流，含 md 预处理、SVG→PNG、并发导入、断点续传与失败修复，全部脚本参数化可跨项目复用 |
-| `IT业务模块梳理` | 针对具体 IT 项目的业务模块进行「梳理」或「生成」，输出业务流程、前后端调用链路、状态流转、核心接口与数据模型，或完整教程级 Markdown 文档 |
+| `browser-doc-scraper` | 复用已登录 Chrome 会话，监听内部 API 抓取 codefather.cn 等课程文档为 Markdown，并可一键导入飞书知识库 |
+| `feishu-wiki-md-import` | 用 lark-cli 把本地 Markdown 项目（含图片/SVG/表格）批量导入飞书知识库并做三重保真校验（结构/图片/文字）的完整工作流，含 md 预处理、SVG→PNG、并发导入、断点续传与失败修复，全部脚本参数化可跨项目复用 |
+| `it-module-analysis` | 针对具体 IT 项目的业务模块进行「梳理」或「生成」，输出业务流程、前后端调用链路、状态流转、核心接口与数据模型，或完整教程级 Markdown 文档 |
 | `browser-automation` | 浏览器自动化测试（Edge+Chrome）：基于本机真实浏览器（绿色版 Chrome:9224 / Edge:9225）做前端调试与自动化测试，手动启动 + CDP 连接模式，内置 NODE_OPTIONS / 代理环境变量修复与排障速查。与 `Browser自动爬文档` 定位不同（爬取课程文档），二者并存 |
 | `wkt-daily-report` | WKT 工作周/日报自动填写：按公司 Excel 模板按周建簿、把当日工作均分到 8 个时段（中文叙述、同义换写、结束点模型），素材自动聚合——git 当日提交 + 「修改日期=今日」的暂存/工作区文件全树兜底扫描 + 跨 agent 工作上下文池（context/YYYY-MM-DD.md），素材为空留白不编造 |
+| `course-to-handbook` | 课程资料 → 系统化知识手册：按材料自适应策略整理——仅字幕 / 字幕+音频（缺失或损坏字幕用 Faster-Whisper + 本地 whisper small 离线重转写修复）/ 字幕+视频（抽帧视觉审阅精选图文笔记，用户不要图时逐级降级）。封装 3 个脚本：`audit_srt.py`（字幕损坏审计：empty/garbled/short 判定 + JSON 报告）、`transcribe_local.py`（本地离线转写：自动定位模型快照、断点续传、并行友好）、`tools_download_model.py`（一次性下载模型到数据盘 + 修复 Windows 坏符号链接） |
 
 ## 方法论 / 规范文档
 
