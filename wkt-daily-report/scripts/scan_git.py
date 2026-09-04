@@ -4,19 +4,21 @@
 WKT 日报 - 扫描当日 git 提交/暂存 + 当日修改文件，用于补充日报内容
 
 扫描 git_root 下所有 git 仓库（默认深度 3），收集：
-  1. 当天的本地提交（按 committer date 过滤，含尚未 push 的）
-  2. 暂存区（git add 过但没提交）的文件 —— 只收「文件修改日期=今日」的，
-     几天前遗留的暂存改动不计入今日素材（older_counts 里给计数）
-  3. 工作区改动 / 新增文件 —— 同样只收今日修改的
-  4. today_modified：全树扫描修改日期为今日的代码文件（无论有无提交/暂存），
-     并标注 git 状态。没提交也没 add 的当天工作全靠它兜底。
+  1. 当天的本地提交 —— 扫所有本地分支（--branches），切过分支也不漏（含尚未 push 的）
+  2. 暂存区（git add 过但没提交）的文件 —— 只收「文件修改日期在近 N 天内」的
+     （N 默认 3：今日+昨天+前天，--mtime-days 可调），更早的遗留不计入
+     （beyond_window 里给计数）
+  3. 工作区改动 / 新增文件 —— 同样按近 N 天修改过滤
+  4. today_modified / recent_modified：全树扫描修改日期在窗口内的代码文件
+     （无论有无提交/暂存），标注 git 状态与修改时间。没提交也没 add 的当天
+     工作全靠它兜底；今日素材少时用 recent_modified（昨天/前天）扩充。
 
 排除：Markdown 文档、测试代码、锁文件、构建产物、图片字体等。
 
 用法：
   python scan_git.py [--date 2026-09-03] [--root D:/yefengwei/wkt]
                      [--depth 3] [--with-diff] [--max-lines 120]
-                     [--all-authors] [--no-tree] [--tree-limit 300]
+                     [--all-authors] [--no-tree] [--mtime-days 3]
                      [--out FILE]
 """
 
@@ -173,13 +175,20 @@ def parse_numstat(text):
     return out
 
 
-def is_today_mtime(path, date_str):
-    """文件 mtime 是否落在 date_str 当天（本地时区）"""
+def is_in_window_mtime(path, end_date, days):
+    """文件 mtime 是否落在 [end_date-(days-1), end_date] 窗口内（本地时区，含 end_date 当天）
+
+    days=1 即仅当天；days=3 即今天+昨天+前天。
+    返回 (是否在窗口, 当天日期 iso 或 None)
+    """
     try:
         mtime = dt.datetime.fromtimestamp(os.path.getmtime(path)).date()
     except OSError:
-        return False
-    return mtime.isoformat() == date_str
+        return False, None
+    start = end_date - dt.timedelta(days=days - 1)
+    if start <= mtime <= end_date:
+        return True, mtime.isoformat()
+    return False, None
 
 
 def collect_repo_state(repo):
@@ -206,14 +215,17 @@ def collect_repo_state(repo):
     return state
 
 
-def scan_repo(repo, date_str, authors, with_diff, max_lines, do_tree):
+def scan_repo(repo, date_str, authors, with_diff, max_lines, do_tree, mtime_days):
     """扫描单个仓库"""
     since = f"{date_str} 00:00:00"
     until = f"{date_str} 23:59:59"
+    end_date = dt.date.fromisoformat(date_str)
 
+    # 扫所有本地分支的当日提交（用户每个项目有多个本地分支，只扫 HEAD 会漏
+    # 切走分支前做的提交）。--all 相比 HEAD 多出的正是本地其他分支。
     fmt = REC + "%H" + FIELD + "%h" + FIELD + "%an" + FIELD + "%ae" + FIELD + "%ad" + FIELD + "%s"
     raw = run_git(repo, [
-        "log", f"--since={since}", f"--until={until}",
+        "log", "--all", f"--since={since}", f"--until={until}",
         f"--pretty=format:{fmt}",
         "--date=format:%Y-%m-%d %H:%M",
         "--name-only",
@@ -272,15 +284,16 @@ def scan_repo(repo, date_str, authors, with_diff, max_lines, do_tree):
             "unpushed": _h in unpushed, "files": files,
         })
 
-    # 暂存区 / 工作区改动 —— 只收「文件修改日期=今日」的条目，
-    # 遗留多日的暂存不算今日素材（older_* 只给计数供核对）
+    # 暂存区 / 工作区改动 —— 只收「文件修改日期在近 N 天内」的条目，
+    # 更早的遗留不算素材（beyond_window 只给计数供核对）
     repo_state = collect_repo_state(repo)
-    staged, older_staged = [], []
+    staged, beyond_staged = [], []
     for st, path in repo_state.get("staged", []):
         if not should_skip(path):
             full = os.path.join(repo, path.replace("/", os.sep))
-            if is_today_mtime(full, date_str):
-                entry = {"status": st, "path": path, "mtime_today": True}
+            in_win, mday = is_in_window_mtime(full, end_date, mtime_days)
+            if in_win:
+                entry = {"status": st, "path": path, "mtime_date": mday}
                 if with_diff:
                     patch = run_git(repo, ["diff", "--cached", "--", path])
                     lines = patch.splitlines()
@@ -289,33 +302,36 @@ def scan_repo(repo, date_str, authors, with_diff, max_lines, do_tree):
                     entry["patch"] = patch
                 staged.append(entry)
             else:
-                older_staged.append(path)
+                beyond_staged.append(path)
 
-    unstaged, older_unstaged = [], []
+    unstaged, beyond_unstaged = [], []
     for st, path in repo_state.get("unstaged", []):
         if should_skip(path):
             continue
         full = os.path.join(repo, path.replace("/", os.sep))
-        if is_today_mtime(full, date_str):
-            unstaged.append({"status": st, "path": path})
+        in_win, mday = is_in_window_mtime(full, end_date, mtime_days)
+        if in_win:
+            unstaged.append({"status": st, "path": path, "mtime_date": mday})
         else:
-            older_unstaged.append(path)
+            beyond_unstaged.append(path)
 
     # 未跟踪文件：git status 一次拿到，mtime 是文件真实修改时间
-    untracked, older_untracked = [], []
+    untracked, beyond_untracked = [], []
     for st, path in repo_state.get("untracked", []):
         if should_skip(path):
             continue
         full = os.path.join(repo, path.replace("/", os.sep))
-        if is_today_mtime(full, date_str):
-            untracked.append(path)
+        in_win, mday = is_in_window_mtime(full, end_date, mtime_days)
+        if in_win:
+            untracked.append({"path": path, "mtime_date": mday})
         else:
-            older_untracked.append(path)
+            beyond_untracked.append(path)
 
-    # today_modified：全树扫描「修改日期=今日」的代码文件（兜底）。
-    # 即使没提交、没 add，只要今天动过就收进来，并标注 git 状态。
+    # recent_modified：全树扫描「修改日期在近 N 天内」的代码文件（兜底）。
+    # 即使没提交、没 add，只要窗口内动过就收进来，并标注 git 状态与修改日期。
+    # today_modified 是其中 date==目标日期的子集（日报当天主素材）。
     today_modified = []
-    tree_today = set()
+    recent_modified = []
     if do_tree:
         skip_dirs = {"node_modules", "dist", "build", ".git", ".idea", ".vscode",
                      "vendor", "target", "out", "coverage", "__pycache__", ".workbuddy"}
@@ -327,20 +343,24 @@ def scan_repo(repo, date_str, authors, with_diff, max_lines, do_tree):
             dirnames[:] = [d for d in dirnames if d not in skip_dirs and not d.startswith(".")]
             for name in filenames:
                 p = os.path.join(dirpath, name)
-                if not is_today_mtime(p, date_str):
+                in_win, mday = is_in_window_mtime(p, end_date, mtime_days)
+                if not in_win:
                     continue
                 rel = os.path.relpath(p, repo).replace("\\", "/")
                 if should_skip(rel):
                     continue
-                tree_today.add(rel)
-                today_modified.append({
+                entry = {
                     "path": rel,
+                    "mtime_date": mday,
                     "mtime": dt.datetime.fromtimestamp(os.path.getmtime(p)).strftime("%H:%M"),
                     "git_state": "/".join(sorted(status_map.get(rel, {"committed-or-clean"}))) or "committed-or-clean",
-                })
-        today_modified.sort(key=lambda x: x["mtime"], reverse=True)
+                }
+                recent_modified.append(entry)
+                if mday == date_str:
+                    today_modified.append(entry)
+        recent_modified.sort(key=lambda x: (x["mtime_date"], x["mtime"]), reverse=True)
 
-    if not (commits or staged or unstaged or untracked or today_modified):
+    if not (commits or staged or unstaged or untracked or recent_modified):
         return None
 
     result = {
@@ -354,12 +374,13 @@ def scan_repo(repo, date_str, authors, with_diff, max_lines, do_tree):
     }
     if do_tree:
         result["today_modified"] = today_modified
-        result["older_counts"] = {
-            "staged": len(older_staged),
-            "unstaged": len(older_unstaged),
-            "untracked": len(older_untracked),
+        result["recent_modified"] = recent_modified
+        result["beyond_window"] = {
+            "staged": len(beyond_staged),
+            "unstaged": len(beyond_unstaged),
+            "untracked": len(beyond_untracked),
         }
-        result["tree_files_today"] = len(tree_today)
+        result["tree_files_recent"] = len(recent_modified)
     return result
 
 
@@ -371,8 +392,10 @@ def main():
     ap.add_argument("--with-diff", action="store_true", help="输出代码补丁")
     ap.add_argument("--max-lines", type=int, default=120, help="单文件补丁最大行数")
     ap.add_argument("--all-authors", action="store_true", help="不过滤作者，收集所有人的提交")
+    ap.add_argument("--mtime-days", type=int, default=3,
+                    help="暂存/工作区/全树扫描的文件修改日期窗口（天，含目标日，默认 3）")
     ap.add_argument("--no-tree", action="store_true",
-                    help="关闭全树「今日修改文件」扫描（默认开启，兜底未提交未暂存的当日工作）")
+                    help="关闭全树「近期修改文件」扫描（默认开启，兜底未提交未暂存的工作）")
     ap.add_argument("--out", help="结果写入文件（同时仍打印到 stdout）")
     args = ap.parse_args()
 
@@ -383,11 +406,12 @@ def main():
     skip_dirs = set(cfg.get("git_skip_dirs", []))
     authors = None if args.all_authors else set(cfg.get("git_authors", []))
     do_tree = not args.no_tree
+    mtime_days = args.mtime_days
 
     repos = find_repos(root, depth, skip_dirs, cfg.get("git_skip_repos") or [])
     results = []
     for repo in repos:
-        r = scan_repo(repo, date_str, authors, args.with_diff, args.max_lines, do_tree)
+        r = scan_repo(repo, date_str, authors, args.with_diff, args.max_lines, do_tree, mtime_days)
         if r:
             results.append(r)
     results = prune_nested(results)
@@ -397,6 +421,7 @@ def main():
     out = {
         "ok": True,
         "date": date_str,
+        "mtime_days": mtime_days,
         "root": root,
         "repos_scanned": len(repos),
         "summary": {
@@ -407,6 +432,7 @@ def main():
             "unstaged_files": sum(len(r["unstaged"]) for r in results),
             "untracked_files": sum(len(r["untracked"]) for r in results),
             "today_modified_files": sum(len(r.get("today_modified", [])) for r in results),
+            "recent_modified_files": sum(len(r.get("recent_modified", [])) for r in results),
         },
         "repos": results,
     }
