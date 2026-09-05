@@ -1,5 +1,5 @@
 ---
-name: 浏览器自动化测试（Edge+Chrome）
+name: browser-automation
 description: 使用用户本机的真实浏览器（绿色版 Chrome 或 Microsoft Edge）进行前端开发调试和自动化测试。当用户提到"用 Chrome 测试"、"用 Edge 测试"、"用我的浏览器"、"指定浏览器"、"前端自动化"、"浏览器跑一遍"、"截图验证"、"打开页面看看"、或带端口号要求连真实浏览器时触发。用户指定哪个浏览器就用哪个（Chrome→9224，Edge→9225），未指定默认 Chrome。基于 agent-browser skill，封装了本机特有的环境变量修复（NODE_OPTIONS 不能含 --use-system-ca；HTTP_PROXY 需 unset）、双浏览器路径选择、手动启动+CDP 连接模式，避免每次重踩坑。
 triggers:
   - "用 Chrome 测试"

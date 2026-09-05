@@ -1,9 +1,9 @@
 ---
-name: 飞书知识库MD导入
+name: feishu-wiki-md-import
 description: 用 lark-cli 把本地 Markdown 项目（含图片/SVG/表格）批量导入飞书知识库并做三重保真校验的完整工作流。当用户要求"把 md/文档导入飞书知识库/wiki"、"按目录结构导入飞书"、"迁移文档到飞书"时使用。
 ---
 
-# 飞书知识库 Markdown 批量导入工作流
+# 飞书知识库 Markdown 批量导入工作流 (feishu-wiki-md-import)
 
 2026-09-02 实战验证 ×2：① 编程导航 120 篇 md / 2870 张图（1.4GB）/ 5 项目 / 42 子目录（固定两层）；② easy-vibe 195 篇纯 md / 29 目录节点（**任意深度 2~4 层**，根级与目录级混排 md）。结构、图片、文字三重校验全通过。
 

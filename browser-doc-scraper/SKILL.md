@@ -1,5 +1,5 @@
 ---
-name: Browser自动爬文档
+name: browser-doc-scraper
 description: 批量抓取 codefather.cn（程序员鱼皮）等 Next.js 课程站点的整课文档为本地 Markdown，并可选导入飞书知识库。复用本机已登录的 Chrome 会话（CDP 远程调试），通过监听内部 article API 绕过反爬，按目录结构自动归类、清洗水印与零宽字符，图片保留在线链接。当用户要求“抓取/爬取某课程文档”“把 codefather 课程下载到本地/某文件夹”“导入飞书知识库按目录排列”时使用。
 agent_created: true
 ---
@@ -65,7 +65,7 @@ node scripts/fetch-course.js \
 
 ### 4.（可选）导入飞书知识库
 
-> 💡 **飞书导入最新、最完整的方案已拆为独立 skill `飞书知识库MD导入`**（9/2 新增，原生 Markdown 导入，
+> 💡 **飞书导入最新、最完整的方案已拆为独立 skill `feishu-wiki-md-import`**（9/2 新增，原生 Markdown 导入，
 > 已 120 篇 / 2870 图实战验证：直接 `docs +create --doc-format markdown` + `@./images/` 语法，
 > 不需要 pandoc/docx、不踩下面的 HTML img 坑）。**新项目优先用那个 skill。**
 > 本步骤保留基于 `pandoc+docx` 的历史方案，供兼容与离线参考。
